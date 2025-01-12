@@ -5,28 +5,29 @@ import casadi as ca
 import math as mt
 import matplotlib.pyplot as plt
 import os.path
-n = 3
+n = 3  #number of drones
 g = 9.81
 
 #define the parameters
-md = 1.0
-m = 1.0
-tf_guess = 20.0
+md = 1.0   #mass of each drone
+m = 1.0 #mass of payload
+tf_guess = 20.0 #guess optimal time
 #kv = 0.0
-N = 100
-kmax = 3.0
+N = 100  #Number of time intervals
+kmax = 3.0 #maximum allowable jerk
 #aerodynamic parameters
 Cd = 2.0
 rho=1.225
 Sref = 1.0
 #define reference values
+#Used to scale model equations for better convergence
 mu_ref = 1.00*100
 t_ref = 1/mu_ref**0.5
 u_ref = kmax*t_ref
 l_ref=u_ref*t_ref**2
 v_ref = l_ref/t_ref
 
-
+#define internal forces as optimization variables
 mu_array = []
 program_zero = 1e-3
 
@@ -38,26 +39,28 @@ print(mu_array)
 
 
 def mu_index(i,j):
+    #function to convert drone index numbers to array index
     in1 = min(i,j)
     in2 = max(i,j)
     return (5*in1-in1**2)/2+in2-1
 
+#define state and control variables
 x = ca.SX.sym('x',6*(n+1))
 u = ca.SX.sym('u',3*n)
 
 
-
+#define Adjacency matrix
 Ad=ca.SX.zeros(n+1,n+1)
-Adv = ca.SX.zeros(n+1,n+1)
+
 for i in range(n+1):
    for j in range(n+1):
         if i!=j:
-            #Ad[i,j]=mu["mu_"+str(min(i,j))+str(max(i,j))]
             Ad[i,j]=mu_array[mu_index(i,j)]
- #           Adv[i,j]=kv
 
+#Calculate the laplacian
 L = ca.diag(Ad@ca.SX.ones((n+1,1)))-Ad
-#Lv = ca.diag(Adv@ca.SX.ones((n+1,1)))-Adv
+
+#calculate the system dynamics
 A = ca.vertcat(ca.horzcat(ca.SX.zeros((3*n+3,3*n+3)),ca.SX.eye(3*n+3)),ca.horzcat(-ca.kron(L,ca.SX.eye(3)),ca.SX.zeros((3*n+3,3*n+3))))
 #A = ca.vertcat(ca.horzcat(ca.SX.zeros((3*n+3,3*n+3)),ca.SX.eye(3*n+3)),ca.horzcat(-ca.kron(L,ca.SX.eye(3)),-ca.kron(Lv,ca.SX.eye(3))))
 
@@ -70,24 +73,27 @@ k = ca.SX.sym('k',3*n)
 s=ca.vertcat(x,u)
 sdot = ca.vertcat(xdot,k)
 
+#casADi function for state equations
 f = ca.Function('f', [s,k,mu_array], [sdot], ['s','k','mu'], ['sdot'])
-#print(sdot)
+
 
 # solve the optimization problem
 
 #define intial conditions
+#drone positions
 drone_pi=[]
 drone_pi.append([-1.732,1.0,0.0])
 drone_pi.append([1.732,1,0.0])
 drone_pi.append([0.0,-2.0,0.0])
 drone_pi = np.array(drone_pi)/l_ref
-
+#drone velocity
 drone_vi = []
 drone_vi.append([0.0,0.0,0.0])
 drone_vi.append([0.0,0.0,0.0])
 drone_vi.append([0.0,0.0,0.0])
 drone_vi = np.array(drone_vi)/v_ref
 
+#define final conditions
 
 drone_pf = []
 drone_pf.append([-1.732/2.0,1/2.0,0.0])
@@ -102,10 +108,10 @@ drone_vf.append([0.0,0.0,0.0])
 drone_vf = np.array(drone_vf)/v_ref
 
 
-
+#payload intial conditons
 target_pi = []
-target_pi = np.array([0.0,0.0,0.0])/l_ref
-target_vi = np.array([0.0,0.0,-1.0])/v_ref
+target_pi = np.array([0.0,0.0,0.0])/l_ref #position
+target_vi = np.array([0.0,0.0,-1.0])/v_ref #velocity
 
 
 
@@ -134,22 +140,24 @@ for i in range(n+1):
         else:
             lo[i,j] = 0
 #initial conditions
+#calculate final payload position
 catch_point = np.zeros(3)
 for i in range(n):
     catch_point=catch_point+np.array(drone_pf[i])
 catch_point=catch_point/n
 
 target_zf = -(lo[0,1]**2-np.linalg.norm(catch_point-drone_pf[0])**2)**0.5
-print(target_zf)
+
 target_pf = catch_point+np.array([0,0,target_zf])
+
+
 u_start = np.zeros(9)
 u_final = []
-
+#the final control input must be consistent with the system model
 
 for i in range(n):
     u_final.append(m*g/md/n/(drone_pf[i,2]-target_pf[2])*(drone_pf[i]-target_pf)/u_ref)
 u_final=np.concatenate(u_final)
-print(u_final)
 s_start = np.concatenate([x0,u_start])
 
 xf = np.concatenate([target_pf,drone_pf[0],drone_pf[1],drone_pf[2],[0.0,0.0,0.0],drone_vf[0],drone_vf[1],drone_vf[2]])
@@ -158,6 +166,7 @@ s_end = np.concatenate([xf,u_final])
 
 xg = []
 k_guess = []
+#linear initial guess
 for i in range(N):
     xg.append(s_start+(s_end-s_start)*i/(N-1))
 
@@ -252,14 +261,11 @@ for i in range(n):
         rj = Xk[3*j:3*j+3]
         var_name = 'mu_0_'+str(i)+str(j)
         g.append(mu_array_t[mu_index(i,j)]*((ca.norm_2(ri-rj))-lo[i,j]))
-        #g.append(mu_t[var_name]*((ca.norm_2(ri-rj))**2-lo[i,j]**2))
-        #g.append(mu_t[var_name]*((ca.norm_2(ri-rj))-lo[i,j])**2)
-        #lbg.append([0.0])
-        #ubg.append([program_zero])
+        
         lbg.append([0.0])
         ubg.append([0.0])
         g.append((ca.norm_2(ri-rj))-lo[i,j])
-        #g.append((ca.norm_2(ri-rj))**2-lo[i,j]**2)
+       
         lbg.append([-np.inf])
         ubg.append([0.0])
 
@@ -299,9 +305,7 @@ for i in range(1,N-1):
     ubw.append(k_ub)
     w0.append(0.5*(k_lb+k_ub))
     u_plot.append(Uk)
-    #print(Xc[i])
-    #print(Ukc[i-1])
-    #print(mu_array_t)
+    
     # Append collocation equations
     fj  = f(Xc[i],Ukc[i-1],mu_array_t_all[i-1])
     fjp1  = f(Xc[i+1],Ukc[i],mu_array_t_all[i])
@@ -317,11 +321,9 @@ for i in range(1,N-1):
         for j2 in range(i2+1,n+1):
             rj = Xk[3*j2:3*j2+3]
             var_name = 'mu_'+str(i)+'_'+str(i2)+str(j2)
-            #print(mu_t)
+         
             g.append(mu_array_t[mu_index(i2,j2)]*((ca.norm_2(ri-rj))-lo[i2,j2]))
-            #g.append(mu_t[var_name]*((ca.norm_2(ri-rj))**2-lo[i2,j2]**2))
-            #lbg.append([0.0])
-            #ubg.append([program_zero])
+            
             lbg.append([0.0])
             ubg.append([0.0])
             g.append((ca.norm_2(ri-rj))-lo[i2,j2])
@@ -361,16 +363,13 @@ for i2 in range(n):
     for j2 in range(i2+1,n+1):
         rj = Xk[3*j2:3*j2+3]
         var_name = 'mu_'+str(i)+'_'+str(i2)+str(j2)
-        #print(mu_t)
+        
         g.append(mu_array_t[mu_index(i2,j2)]*((ca.norm_2(ri-rj))-lo[i2,j2]))
-        #g.append(mu_t[var_name]*((ca.norm_2(ri-rj))-lo[i2,j2])**2)
-        #g.append(mu_t[var_name]*((ca.norm_2(ri-rj))**2-lo[i2,j2]**2))
-        #lbg.append([0.0])
-        #ubg.append([program_zero])
+        
         lbg.append([0.0])
         ubg.append([0.0])
         g.append((ca.norm_2(ri-rj))-lo[i2,j2])
-        #g.append((ca.norm_2(ri-rj))**2-lo[i2,j2]**2)
+      
         lbg.append([-np.inf])
         ubg.append([0.0])
 
@@ -383,10 +382,7 @@ lbw.append(k_lb)
 ubw.append(k_ub)
 w0.append(0.5*(k_lb+k_ub))
 u_plot.append(Uk)
-#print(Xc[i])
-#print(Ukc[i-1])
-#print(mu_array_t)
-# Append collocation equations
+
 fj  = f(Xc[i],Ukc[i-1],mu_array_t_all[i-1])
 fjp1  = f(Xc[i+1],Ukc[i],mu_array_t_all[i])
 g.append(Xc[i+1]-Xc[i]-Xc[0]/(N-1)*0.5*(fj+fjp1))
@@ -427,9 +423,6 @@ output = sol['x']
 output = np.array(output)
 t_array = np.concatenate([0.0+i*output[0]/(N-1) for i in range(N)])
 
-#print(x_plot)
-#print(u_plot)
-#print(mu_plot)
 # Function to get x and u trajectories from w
 trajectories = ca.Function('trajectories', [w], [x_plot,u_plot,mu_plot], ['w'], ['x', 'u','mu'])
 #trajectories = ca.Function('trajectories', [w], [x_plot,u_plot], ['w'], ['x', 'u'])
