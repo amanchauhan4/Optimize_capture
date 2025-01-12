@@ -1,4 +1,4 @@
-# use optimization to solve dynamics and optimal control
+# use optimization to solve dynamics and optimal control for payload capture using multiple drones
 
 import numpy as np
 import casadi as ca
